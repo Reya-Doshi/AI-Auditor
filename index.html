@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Auditor - Enterprise Hallucination Detection</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        slate: {
+                            850: '#1e293b',
+                            900: '#0f172a',
+                            950: '#020617',
+                        },
+                        brand: {
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            glow: '#60a5fa',
+                        }
+                    },
+                    boxShadow: {
+                        'glow': '0 0 20px rgba(59, 130, 246, 0.15)',
+                        'glow-strong': '0 0 25px rgba(59, 130, 246, 0.4)',
+                        'glass': '0 8px 32px 0 rgba(0, 0, 0, 0.1)',
+                    },
+                    animation: {
+                        'scan': 'scan 2s ease-in-out infinite',
+                        'float': 'float 6s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        scan: {
+                            '0%, 100%': { backgroundPosition: '0% 50%' },
+                            '50%': { backgroundPosition: '100% 50%' },
+                        },
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-10px)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Modern Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Animations */
+        .slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .fade-in { animation: fadeIn 0.6s ease-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.98); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        /* Scanning Line */
+        .scanner-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #3b82f6, transparent);
+            box-shadow: 0 0 10px #3b82f6;
+            animation: scanline 2s ease-in-out infinite;
+            z-index: 50;
+            pointer-events: none;
+        }
+        @keyframes scanline {
+            0% { top: 0%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+
+        /* Grid Background */
+        .cyber-grid {
+            background-size: 50px 50px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+            mask-image: radial-gradient(circle at center, black 40%, transparent 100%);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 h-screen overflow-hidden flex flex-col font-sans selection:bg-brand-500/30">
+
+    <div id="root" class="w-full h-full flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- ICONS ---
+        const Icons = {
+            CheckCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+            XCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>,
+            AlertTriangle: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+            FileText: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>,
+            Bot: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 12v2"/><path d="M2 12v2"/><path d="M22 8h-2"/><path d="M4 8H2"/></svg>,
+            Shield: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+            Activity: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>,
+            Eye: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>,
+            ArrowRight: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
+            ArrowDown: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>,
+            Upload: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+            Briefcase: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
+            Scale: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg>,
+            Cpu: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+        };
+
+        // --- EXPANDED DATASET ---
+        const CASES = [
+            // --- MEDICAL ---
+            {
+                id: "case-med-1", category: "Medical", icon: <Icons.Activity />, title: "Patient Record Audit", desc: "Clinical Notes vs. EHR",
+                source: {
+                    title: "Electronic Health Record (EHR) #4092",
+                    paragraphs: [
+                        { id: 1, text: "The patient is a 42-year-old male presenting for an annual checkup." },
+                        { id: 2, text: "He has no history of diabetes or cardiovascular disease." },
+                        { id: 3, text: "His blood glucose levels are within normal range (85 mg/dL)." },
+                        { id: 4, text: "The patient is currently being treated for hypertension with Lisinopril." },
+                        { id: 5, text: "Lisinopril dosage is set at 10mg once daily in the morning." },
+                        { id: 6, text: "Patient is advised to follow a low-sodium DASH diet and engage in moderate aerobic exercise." },
+                        { id: 7, text: "A follow-up appointment is scheduled for 6 months from today." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "The patient is a 42-year-old male", status: "supported", sourceId: 1, confidence: "98%", explanation: "Accurately reflects demographic data found in EHR.", correction: null },
+                    { id: "C2", text: " diagnosed with Type 2 Diabetes", status: "contradicted", sourceId: 2, confidence: "99%", explanation: "Direct contradiction found in Source Para 2.", correction: "NO history of diabetes." },
+                    { id: "C3", text: " and hypertension.", status: "supported", sourceId: 4, confidence: "95%", explanation: "Confirmed by medication history.", correction: null },
+                    { id: "C4", text: " He requires daily insulin injections.", status: "unverifiable", sourceId: null, confidence: "40%", explanation: "No evidence of insulin regimen in source.", correction: "Source silent on insulin." },
+                    { id: "C5", text: " He takes 10mg of Lisinopril daily.", status: "supported", sourceId: 5, confidence: "97%", explanation: "Matches dosage in Para 5.", correction: null },
+                    { id: "C6", text: " The doctor recommended a strict Keto diet.", status: "contradicted", sourceId: 6, confidence: "92%", explanation: "Source recommends DASH diet, not Keto.", correction: "Recommended DASH diet." },
+                    { id: "C7", text: " Follow-up is in 6 months.", status: "supported", sourceId: 7, confidence: "99%", explanation: "Verified against appointment schedule.", correction: null }
+                ]
+            },
+            {
+                id: "case-med-2", category: "Medical", icon: <Icons.Activity />, title: "Clinical Trial Summary", desc: "Study Results vs. Report",
+                source: {
+                    title: "Phase 3 Clinical Trial Report - CardioX",
+                    paragraphs: [
+                        { id: 1, text: "The study enrolled 5,000 participants across 12 countries." },
+                        { id: 2, text: "Primary endpoint was reduction in LDL cholesterol levels at week 24." },
+                        { id: 3, text: "CardioX demonstrated a 35% reduction in LDL compared to placebo." },
+                        { id: 4, text: "Adverse events included mild headache (5%) and nausea (2%)." },
+                        { id: 5, text: "No serious safety concerns were identified during the trial period." },
+                        { id: 6, text: "The p-value for the primary endpoint was < 0.001." },
+                        { id: 7, text: "The study was funded by GlobalPharma Inc." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "The trial included 500 participants.", status: "contradicted", sourceId: 1, confidence: "99%", explanation: "Source specifies 5,000 participants, not 500.", correction: "5,000 participants." },
+                    { id: "C2", text: " The primary endpoint was LDL reduction.", status: "supported", sourceId: 2, confidence: "98%", explanation: "Matches primary endpoint definition.", correction: null },
+                    { id: "C3", text: " CardioX reduced LDL by 35%.", status: "supported", sourceId: 3, confidence: "97%", explanation: "Confirmed by results section.", correction: null },
+                    { id: "C4", text: " Severe liver damage was a common side effect.", status: "contradicted", sourceId: 5, confidence: "95%", explanation: "Source states no serious safety concerns.", correction: "No serious concerns." },
+                    { id: "C5", text: " Participants reported improved sleep quality.", status: "unverifiable", sourceId: null, confidence: "45%", explanation: "Source data does not track or mention sleep quality metrics.", correction: "Not tracked in study." },
+                    { id: "C6", text: " The result was not statistically significant.", status: "contradicted", sourceId: 6, confidence: "99%", explanation: "P-value < 0.001 indicates high significance.", correction: "Statistically significant." },
+                    { id: "C7", text: " Funding provided by the NIH.", status: "contradicted", sourceId: 7, confidence: "90%", explanation: "Funded by GlobalPharma Inc.", correction: "GlobalPharma Inc." }
+                ]
+            },
+            {
+                id: "case-med-3", category: "Medical", icon: <Icons.Activity />, title: "Radiology Report", desc: "Imaging vs. Summary",
+                source: {
+                    title: "MRI Lumbar Spine - Patient 8821",
+                    paragraphs: [
+                        { id: 1, text: "Study performed: MRI of the lumbar spine without contrast." },
+                        { id: 2, text: "L1-L2 and L2-L3 levels appear normal with no disc herniation." },
+                        { id: 3, text: "At L4-L5, there is a 4mm paracentral disc protrusion affecting the left nerve root." },
+                        { id: 4, text: "Vertebral body height and alignment are maintained." },
+                        { id: 5, text: "The spinal cord terminates at the L1 level." },
+                        { id: 6, text: "No evidence of spinal stenosis or mass effect." },
+                        { id: 7, text: "Impression: Moderate disc herniation at L4-L5." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "MRI performed with contrast.", status: "contradicted", sourceId: 1, confidence: "99%", explanation: "Protocol was WITHOUT contrast.", correction: "Without contrast." },
+                    { id: "C2", text: " Normal findings at L1-L3.", status: "supported", sourceId: 2, confidence: "95%", explanation: "Matches findings for upper lumbar levels.", correction: null },
+                    { id: "C3", text: " Herniation noted at L4-L5.", status: "supported", sourceId: 3, confidence: "98%", explanation: "Confirmed 4mm protrusion.", correction: null },
+                    { id: "C4", text: " The right nerve root is compressed.", status: "contradicted", sourceId: 3, confidence: "92%", explanation: "Source specifies LEFT nerve root.", correction: "Left nerve root." },
+                    { id: "C5", text: " Patient has a history of chronic back pain.", status: "unverifiable", sourceId: null, confidence: "30%", explanation: "Radiology report describes imaging findings only, not patient history.", correction: "History not provided." },
+                    { id: "C6", text: " Patient has severe spinal stenosis.", status: "contradicted", sourceId: 6, confidence: "99%", explanation: "Explicitly states NO spinal stenosis.", correction: "No spinal stenosis." },
+                    { id: "C7", text: " Cord terminates at L1.", status: "supported", sourceId: 5, confidence: "97%", explanation: "Anatomically correct per report.", correction: null }
+                ]
+            },
+            
+            // --- FINANCIAL ---
+            {
+                id: "case-fin-1", category: "Financial", icon: <Icons.Briefcase />, title: "Q3 Earnings Call Audit", desc: "Transcript vs. 10-Q Filing",
+                source: {
+                    title: "Acme Corp Q3 Transcript (Official)",
+                    paragraphs: [
+                        { id: 1, text: "Total revenue for the quarter increased by 5% year-over-year to $12M." },
+                        { id: 2, text: "Net profit remained flat due to increased operational costs." },
+                        { id: 3, text: "The board has decided not to declare a dividend this quarter." },
+                        { id: 4, text: "We opened two new retail locations in California." },
+                        { id: 5, text: "Research and Development expenses rose by 12% driven by AI initiatives." },
+                        { id: 6, text: "Global headcount currently stands at 4,500 employees." },
+                        { id: 7, text: "We expect Q4 revenue to be between $14M and $16M." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "Acme Corp reported a 5% revenue increase", status: "supported", sourceId: 1, confidence: "99%", explanation: "Matches reported revenue growth.", correction: null },
+                    { id: "C2", text: " and a significant rise in net profit.", status: "contradicted", sourceId: 2, confidence: "95%", explanation: "Source explicitly states profit was 'flat'.", correction: "Profit was FLAT." },
+                    { id: "C3", text: " The company announced a dividend of $0.50.", status: "contradicted", sourceId: 3, confidence: "98%", explanation: "Board decision was NO dividend.", correction: "NO dividend declared." },
+                    { id: "C4", text: " We plan to expand to Asia next year.", status: "unverifiable", sourceId: null, confidence: "35%", explanation: "Source only mentions California; no mention of international expansion.", correction: "Expansion: California only." },
+                    { id: "C5", text: " R&D spending decreased slightly.", status: "contradicted", sourceId: 5, confidence: "92%", explanation: "Source states R&D rose by 12%.", correction: "R&D ROSE by 12%." },
+                    { id: "C6", text: " The company employs 4,500 people.", status: "supported", sourceId: 6, confidence: "99%", explanation: "Matches current headcount data.", correction: null },
+                    { id: "C7", text: " Q4 revenue guidance is set at $20M.", status: "contradicted", sourceId: 7, confidence: "95%", explanation: "Guidance is $14M-$16M, not $20M.", correction: "Guidance: $14M-$16M." }
+                ]
+            },
+            {
+                id: "case-fin-2", category: "Financial", icon: <Icons.Briefcase />, title: "Internal Audit Report", desc: "Compliance Check",
+                source: {
+                    title: "FY2023 Internal Expense Audit",
+                    paragraphs: [
+                        { id: 1, text: "The audit covered Q1 through Q4 of the fiscal year 2023." },
+                        { id: 2, text: "Total travel expenses amounted to $1.2M, which is 10% over budget." },
+                        { id: 3, text: "All executive travel was approved by the CFO." },
+                        { id: 4, text: "A discrepancy was found in the marketing vendor payments totaling $5,000." },
+                        { id: 5, text: "The IT department procurement followed all standard protocols." },
+                        { id: 6, text: "Petty cash logs were missing for the month of November." },
+                        { id: 7, text: "Recommendations include implementing a new digital receipt system." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "Audit covered FY2023.", status: "supported", sourceId: 1, confidence: "99%", explanation: "Matches audit scope.", correction: null },
+                    { id: "C2", text: " Travel expenses were under budget.", status: "contradicted", sourceId: 2, confidence: "98%", explanation: "Expenses were 10% OVER budget.", correction: "10% OVER budget." },
+                    { id: "C3", text: " The CFO is planning to resign next month.", status: "unverifiable", sourceId: null, confidence: "25%", explanation: "Audit report focuses on past expenses, not personnel future plans.", correction: "Not in audit scope." },
+                    { id: "C4", text: " Marketing discrepancy was $50,000.", status: "contradicted", sourceId: 4, confidence: "95%", explanation: "Discrepancy was $5,000, not $50k.", correction: "$5,000 discrepancy." },
+                    { id: "C5", text: " IT procurement was non-compliant.", status: "contradicted", sourceId: 5, confidence: "96%", explanation: "IT followed all protocols.", correction: "Followed protocols." },
+                    { id: "C6", text: " November petty cash logs are missing.", status: "supported", sourceId: 6, confidence: "99%", explanation: "Confirmed missing logs.", correction: null },
+                    { id: "C7", text: " Audit recommends firing the CFO.", status: "unverifiable", sourceId: null, confidence: "20%", explanation: "No personnel recommendations found.", correction: "Recs: Digital receipts." }
+                ]
+            },
+            {
+                id: "case-fin-3", category: "Financial", icon: <Icons.Briefcase />, title: "Merger Strategy", desc: "M&A Plan vs. Summary",
+                source: {
+                    title: "Project Titan: Acquisition of TechStart",
+                    paragraphs: [
+                        { id: 1, text: "Target Company: TechStart Solutions, valued at $450M." },
+                        { id: 2, text: "Deal structure: 60% cash and 40% stock swap." },
+                        { id: 3, text: "Key intellectual property includes 15 patents in AI robotics." },
+                        { id: 4, text: "TechStart's current CEO will transition to a consultant role." },
+                        { id: 5, text: "Synergy savings estimated at $20M annually starting Year 2." },
+                        { id: 6, text: "Regulatory approval required from the FTC and EU Commission." },
+                        { id: 7, text: "Expected closing date: Q3 2024." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "Acquiring TechStart for $450M.", status: "supported", sourceId: 1, confidence: "98%", explanation: "Matches valuation.", correction: null },
+                    { id: "C2", text: " Deal is 100% cash.", status: "contradicted", sourceId: 2, confidence: "99%", explanation: "Structure is 60% cash, 40% stock.", correction: "60% Cash / 40% Stock." },
+                    { id: "C3", text: " Includes 15 AI patents.", status: "supported", sourceId: 3, confidence: "97%", explanation: "Verified IP portfolio.", correction: null },
+                    { id: "C4", text: " CEO will become CTO.", status: "contradicted", sourceId: 4, confidence: "95%", explanation: "CEO moving to consultant role.", correction: "Consultant role." },
+                    { id: "C5", text: " Synergy savings of $20M/year.", status: "supported", sourceId: 5, confidence: "96%", explanation: "Matches financial projection.", correction: null },
+                    { id: "C6", text: " DOJ approval is required.", status: "contradicted", sourceId: 6, confidence: "92%", explanation: "Requires FTC and EU approval.", correction: "FTC & EU Commission." },
+                    { id: "C7", text: " Closing in Q1 2024.", status: "contradicted", sourceId: 7, confidence: "98%", explanation: "Closing expected Q3 2024.", correction: "Q3 2024." }
+                ]
+            },
+
+            // --- LEGAL ---
+            {
+                id: "case-legal-1", category: "Legal", icon: <Icons.Scale />, title: "MSA Contract Audit", desc: "Draft vs. Master Agreement",
+                source: {
+                    title: "Master Services Agreement (MSA) v4.2",
+                    paragraphs: [
+                        { id: 1, text: "This Agreement is entered into between TechFlow Inc ('Provider') and Alpha Vendors ('Client')." },
+                        { id: 2, text: "Services covered include cloud infrastructure migration and data security audits." },
+                        { id: 3, text: "Payment terms are Net 30 days from the date of invoice receipt." },
+                        { id: 4, text: "All Intellectual Property rights created during this engagement shall belong to the Client." },
+                        { id: 5, text: "Confidentiality obligations shall survive for a period of 5 years post-termination." },
+                        { id: 6, text: "Either party may terminate this agreement with 30 days written notice." },
+                        { id: 7, text: "This Agreement shall be governed by the laws of the State of Delaware." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "Agreement is between TechFlow and Alpha Vendors", status: "supported", sourceId: 1, confidence: "99%", explanation: "Parties match the MSA preamble.", correction: null },
+                    { id: "C2", text: " covering web design services.", status: "contradicted", sourceId: 2, confidence: "94%", explanation: "MSA specifies 'cloud migration' and 'security', not web design.", correction: "Cloud & Security." },
+                    { id: "C3", text: " Payment is due Net 60 days.", status: "contradicted", sourceId: 3, confidence: "98%", explanation: "MSA explicitly states Net 30 days.", correction: "Terms: Net 30." },
+                    { id: "C4", text: " Provider must maintain $5M in liability insurance.", status: "unverifiable", sourceId: null, confidence: "35%", explanation: "Insurance requirements are not defined in the provided MSA text.", correction: "Not defined in text." },
+                    { id: "C5", text: " Confidentiality lasts indefinitely.", status: "contradicted", sourceId: 5, confidence: "85%", explanation: "MSA limits confidentiality to 5 years post-term.", correction: "Expires in 5 years." },
+                    { id: "C6", text: " Termination requires 30 days notice.", status: "supported", sourceId: 6, confidence: "99%", explanation: "Matches termination clause.", correction: null },
+                    { id: "C7", text: " Governed by California law.", status: "contradicted", sourceId: 7, confidence: "99%", explanation: "Jurisdiction is Delaware.", correction: "State of Delaware." }
+                ]
+            },
+            {
+                id: "case-legal-2", category: "Legal", icon: <Icons.Scale />, title: "NDA Audit", desc: "Non-Disclosure Agreement",
+                source: {
+                    title: "Mutual Non-Disclosure Agreement",
+                    paragraphs: [
+                        { id: 1, text: "This NDA is effective as of January 1, 2024." },
+                        { id: 2, text: "Confidential Information includes code, customer lists, and financial data." },
+                        { id: 3, text: "Exclusions: Information already in the public domain is not Confidential." },
+                        { id: 4, text: "Receiving Party agrees to hold information in strict confidence for 3 years." },
+                        { id: 5, text: "Disclosures required by law are permitted with prior notice." },
+                        { id: 6, text: "Upon termination, all copies of data must be destroyed within 7 days." },
+                        { id: 7, text: "Jurisdiction is New York." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "NDA effective Jan 1, 2024.", status: "supported", sourceId: 1, confidence: "99%", explanation: "Matches effective date.", correction: null },
+                    { id: "C2", text: " Includes customer lists as confidential.", status: "supported", sourceId: 2, confidence: "97%", explanation: "Explicitly listed.", correction: null },
+                    { id: "C3", text: " Public info is confidential.", status: "contradicted", sourceId: 3, confidence: "98%", explanation: "Public domain info is EXCLUDED.", correction: "Public domain excluded." },
+                    { id: "C4", text: " Term is 10 years.", status: "contradicted", sourceId: 4, confidence: "95%", explanation: "Term is specified as 3 years.", correction: "3 years." },
+                    { id: "C5", text: " Legal disclosures are allowed.", status: "supported", sourceId: 5, confidence: "96%", explanation: "Permitted with notice.", correction: null },
+                    { id: "C6", text: " Data return timeline is 30 days.", status: "contradicted", sourceId: 6, confidence: "92%", explanation: "Must be destroyed within 7 days.", correction: "7 days." },
+                    { id: "C7", text: " Jurisdiction is Texas.", status: "contradicted", sourceId: 7, confidence: "99%", explanation: "Jurisdiction is New York.", correction: "New York." }
+                ]
+            },
+            {
+                id: "case-legal-3", category: "Legal", icon: <Icons.Scale />, title: "Lease Agreement", desc: "Commercial Real Estate",
+                source: {
+                    title: "Commercial Lease - Suite 400",
+                    paragraphs: [
+                        { id: 1, text: "Lease term is 60 months commencing April 1." },
+                        { id: 2, text: "Base rent is $5,000 per month, increasing 3% annually." },
+                        { id: 3, text: "Tenant is responsible for utilities and janitorial services." },
+                        { id: 4, text: "Security deposit is equal to two months' rent." },
+                        { id: 5, text: "Subletting is prohibited without Landlord's written consent." },
+                        { id: 6, text: "Landlord provides 5 parking spaces." },
+                        { id: 7, text: "Use of premises is restricted to general office use only." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "Lease term is 5 years.", status: "supported", sourceId: 1, confidence: "99%", explanation: "60 months equals 5 years.", correction: null },
+                    { id: "C2", text: " Rent is fixed at $5,000 forever.", status: "contradicted", sourceId: 2, confidence: "98%", explanation: "Rent increases 3% annually.", correction: "Increases 3% annually." },
+                    { id: "C3", text: " Landlord pays for electric.", status: "contradicted", sourceId: 3, confidence: "95%", explanation: "Tenant pays utilities.", correction: "Tenant pays utilities." },
+                    { id: "C4", text: " Security deposit is 1 month rent.", status: "contradicted", sourceId: 4, confidence: "97%", explanation: "Deposit is TWO months' rent.", correction: "Two months' rent." },
+                    { id: "C5", text: " Subletting is freely allowed.", status: "contradicted", sourceId: 5, confidence: "96%", explanation: "Prohibited without consent.", correction: "Prohibited w/o consent." },
+                    { id: "C6", text: " Includes 5 parking spots.", status: "supported", sourceId: 6, confidence: "99%", explanation: "Confirmed in clause 6.", correction: null },
+                    { id: "C7", text: " Can be used for retail.", status: "contradicted", sourceId: 7, confidence: "94%", explanation: "Restricted to Office use only.", correction: "Office use only." }
+                ]
+            },
+
+            // --- TECHNICAL ---
+            {
+                id: "case-tech-1", category: "Technical", icon: <Icons.Cpu />, title: "API Documentation", desc: "Spec vs. Implementation",
+                source: {
+                    title: "Payment Gateway API v2.1",
+                    paragraphs: [
+                        { id: 1, text: "The API uses RESTful architecture over HTTPS." },
+                        { id: 2, text: "Authentication is via Bearer Token in the header." },
+                        { id: 3, text: "Rate limit is set to 100 requests per minute per IP." },
+                        { id: 4, text: "Supported currencies: USD, EUR, GBP, CAD." },
+                        { id: 5, text: "Webhooks retries occur exponentially for up to 24 hours." },
+                        { id: 6, text: "All timestamps are returned in ISO 8601 format." },
+                        { id: 7, text: "Error codes: 400 for Bad Request, 401 for Unauthorized." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "API uses GraphQL.", status: "contradicted", sourceId: 1, confidence: "99%", explanation: "Specifies RESTful architecture.", correction: "RESTful architecture." },
+                    { id: "C2", text: " Auth uses Bearer Tokens.", status: "supported", sourceId: 2, confidence: "98%", explanation: "Confirmed auth method.", correction: null },
+                    { id: "C3", text: " Rate limit is 1000 req/min.", status: "contradicted", sourceId: 3, confidence: "99%", explanation: "Limit is 100 req/min.", correction: "100 req/min." },
+                    { id: "C4", text: " Supports JPY.", status: "unverifiable", sourceId: null, confidence: "30%", explanation: "JPY not listed in supported currencies.", correction: "USD, EUR, GBP, CAD." },
+                    { id: "C5", text: " Webhooks retry for 24 hours.", status: "supported", sourceId: 5, confidence: "97%", explanation: "Matches retry policy.", correction: null },
+                    { id: "C6", text: " Timestamps are Unix Epoch.", status: "contradicted", sourceId: 6, confidence: "95%", explanation: "Format is ISO 8601.", correction: "ISO 8601." },
+                    { id: "C7", text: " 401 indicates Unauthorized.", status: "supported", sourceId: 7, confidence: "99%", explanation: "Standard error code match.", correction: null }
+                ]
+            },
+            {
+                id: "case-tech-2", category: "Technical", icon: <Icons.Cpu />, title: "Security Incident", desc: "Post-Mortem vs. Summary",
+                source: {
+                    title: "Incident Report #404: Database Latency",
+                    paragraphs: [
+                        { id: 1, text: "Incident Start: 14:00 UTC. Incident End: 14:45 UTC." },
+                        { id: 2, text: "Root Cause: High CPU usage on Primary DB node due to unoptimized query." },
+                        { id: 3, text: "Impact: 500 error rate spiked to 15% for checkout endpoints." },
+                        { id: 4, text: "Mitigation: Query was killed and an index was applied." },
+                        { id: 5, text: "Data Loss: None. All transactions were preserved." },
+                        { id: 6, text: "Affected Customers: approx 2,000 active sessions." },
+                        { id: 7, text: "Follow-up: Audit all slow queries > 1000ms." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "Incident lasted 45 minutes.", status: "supported", sourceId: 1, confidence: "99%", explanation: "14:00 to 14:45 UTC.", correction: null },
+                    { id: "C2", text: " Cause was a DDoS attack.", status: "contradicted", sourceId: 2, confidence: "98%", explanation: "Cause was DB CPU usage/Query.", correction: "Bad DB Query." },
+                    { id: "C3", text: " Error rate hit 15%.", status: "supported", sourceId: 3, confidence: "96%", explanation: "Confirmed impact metric.", correction: null },
+                    { id: "C4", text: " The team will hire a new DBA next week.", status: "unverifiable", sourceId: null, confidence: "20%", explanation: "Hiring plans are not part of the incident post-mortem.", correction: "Not in report." },
+                    { id: "C5", text: " Significant data loss occurred.", status: "contradicted", sourceId: 5, confidence: "99%", explanation: "Report states NO data loss.", correction: "No data loss." },
+                    { id: "C6", text: " 20,000 users affected.", status: "contradicted", sourceId: 6, confidence: "95%", explanation: "Report says 2,000 users.", correction: "2,000 users." },
+                    { id: "C7", text: " Audit queries > 100ms.", status: "contradicted", sourceId: 7, confidence: "92%", explanation: "Audit threshold is 1000ms.", correction: "> 1000ms." }
+                ]
+            },
+            {
+                id: "case-tech-3", category: "Technical", icon: <Icons.Cpu />, title: "Cloud Architecture", desc: "Design Doc vs. Pitch",
+                source: {
+                    title: "System Architecture v2.0",
+                    paragraphs: [
+                        { id: 1, text: "The system is hosted on AWS us-east-1 region." },
+                        { id: 2, text: "Compute: Auto-scaling EC2 instances behind an Application Load Balancer." },
+                        { id: 3, text: "Database: Aurora PostgreSQL with Multi-AZ replication." },
+                        { id: 4, text: "Caching: Redis Cluster (ElastiCache) for session management." },
+                        { id: 5, text: "Content Delivery: CloudFront CDN for static assets." },
+                        { id: 6, text: "Disaster Recovery: RPO is 5 minutes, RTO is 1 hour." },
+                        { id: 7, text: "Monitoring: Datadog for metrics and PagerDuty for alerts." }
+                    ]
+                },
+                claims: [
+                    { id: "C1", text: "Hosted on Azure.", status: "contradicted", sourceId: 1, confidence: "99%", explanation: "Architecture is on AWS.", correction: "AWS." },
+                    { id: "C2", text: " Uses Auto-scaling EC2.", status: "supported", sourceId: 2, confidence: "98%", explanation: "Confirmed compute strategy.", correction: null },
+                    { id: "C3", text: " Database is MongoDB.", status: "contradicted", sourceId: 3, confidence: "99%", explanation: "DB is Aurora PostgreSQL.", correction: "Aurora PostgreSQL." },
+                    { id: "C4", text: " Uses Redis for caching.", status: "supported", sourceId: 4, confidence: "97%", explanation: "Matches caching layer.", correction: null },
+                    { id: "C5", text: " Akamai CDN used.", status: "contradicted", sourceId: 5, confidence: "95%", explanation: "Uses CloudFront CDN.", correction: "CloudFront." },
+                    { id: "C6", text: " RPO is 5 minutes.", status: "supported", sourceId: 6, confidence: "96%", explanation: "Matches DR specs.", correction: null },
+                    { id: "C7", text: " Alerts via SMS.", status: "unverifiable", sourceId: null, confidence: "30%", explanation: "Mentions PagerDuty, implies mechanism but not explicit SMS.", correction: "PagerDuty." }
+                ]
+            }
+        ];
+
+        // --- COMPONENTS ---
+
+        const TypewriterEffect = ({ text, onComplete }) => {
+            const [display, setDisplay] = useState("");
+            
+            useEffect(() => {
+                let index = 0;
+                const timer = setInterval(() => {
+                    if (index < text.length) {
+                        setDisplay(prev => prev + text.charAt(index));
+                        index++;
+                    } else {
+                        clearInterval(timer);
+                        if (onComplete) onComplete();
+                    }
+                }, 3); 
+                return () => clearInterval(timer);
+            }, [text]);
+
+            return (
+                <div className="font-mono text-slate-700 leading-loose text-sm md:text-base">
+                    {display}
+                    <span className="inline-block w-2 h-4 bg-brand-600 ml-1 animate-pulse"></span>
+                </div>
+            );
+        };
+
+        const TrustMeter = ({ claims }) => {
+            const supported = claims.filter(c => c.status === 'supported').length;
+            const score = Math.round((supported / claims.length) * 100);
+            
+            // Circular progress calculations
+            const radius = 30;
+            const circumference = 2 * Math.PI * radius;
+            const offset = circumference - (score / 100) * circumference;
+
+            let color = "text-emerald-500";
+            if (score < 50) color = "text-rose-500";
+            else if (score < 80) color = "text-amber-500";
+
+            return (
+                <div className="flex items-center gap-6 glass-dark px-6 py-2 rounded-2xl shadow-glow">
+                    <div className="flex flex-col text-right">
+                        <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Document Trust Score</span>
+                        <span className={`text-2xl font-bold ${color} tabular-nums`}>{score}%</span>
+                    </div>
+                    <div className="relative w-16 h-16 flex items-center justify-center">
+                        {/* Background Circle */}
+                        <svg className="w-full h-full transform -rotate-90">
+                            <circle cx="32" cy="32" r={radius} fill="none" stroke="#1e293b" strokeWidth="6" />
+                            {/* Progress Circle */}
+                            <circle 
+                                cx="32" cy="32" r={radius} 
+                                fill="none" 
+                                stroke="currentColor" 
+                                strokeWidth="6"
+                                strokeDasharray={circumference}
+                                strokeDashoffset={offset}
+                                strokeLinecap="round"
+                                className={`transition-all duration-1000 ease-out ${color} drop-shadow-[0_0_10px_rgba(0,0,0,0.5)]`}
+                            />
+                        </svg>
+                        <div className={`absolute inset-0 flex items-center justify-center ${color}`}>
+                            <Icons.Shield />
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const HomePage = ({ onSelectCase }) => (
+            <div className="flex flex-col items-center justify-center h-full bg-slate-950 text-white relative overflow-hidden">
+                {/* Dynamic Background */}
+                <div className="absolute inset-0 cyber-grid opacity-20 pointer-events-none"></div>
+                <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-transparent via-transparent to-slate-950/90 pointer-events-none"></div>
+                
+                <div className="z-10 text-center max-w-6xl px-6 fade-in flex flex-col items-center h-full overflow-y-auto py-12">
+                    <div className="inline-flex items-center gap-2 bg-brand-900/40 border border-brand-500/30 px-4 py-1.5 rounded-full text-xs font-mono mb-8 text-brand-400 shadow-glow animate-float">
+                        <span className="w-2 h-2 bg-brand-500 rounded-full animate-pulse"></span>
+                        SYSTEM ONLINE: ZERO KNOWLEDGE ARCHITECTURE
+                    </div>
+                    
+                    <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-6 bg-clip-text text-transparent bg-gradient-to-br from-white via-slate-200 to-slate-500 drop-shadow-2xl">
+                        AI Hallucination Auditor
+                    </h1>
+                    
+                    <p className="text-lg text-slate-400 mb-12 max-w-2xl mx-auto leading-relaxed">
+                        Select a domain to initialize forensic verification.
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
+                        {['Medical', 'Financial', 'Legal', 'Technical'].map(cat => (
+                            <div key={cat} className="space-y-3">
+                                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 pl-1">{cat} Protocols</h3>
+                                {CASES.filter(c => c.category === cat).map(c => (
+                                    <button 
+                                        key={c.id}
+                                        onClick={() => onSelectCase(c.id)}
+                                        className="w-full group relative bg-slate-900/50 hover:bg-slate-800/60 border border-slate-800 hover:border-brand-500/50 p-4 rounded-xl transition-all duration-300 text-left hover:-translate-y-1 hover:shadow-glow-strong"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-slate-800 rounded-lg text-brand-400 group-hover:text-white group-hover:bg-brand-600 transition-colors">
+                                                {c.icon}
+                                            </div>
+                                            <div>
+                                                <div className="font-bold text-sm text-slate-200 group-hover:text-white">{c.title}</div>
+                                                <div className="text-[10px] text-slate-500">{c.desc}</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const [view, setView] = useState('home');
+            const [activeCaseId, setActiveCaseId] = useState("case-med-1");
+            const [selectedClaimId, setSelectedClaimId] = useState(null);
+            const [simulationPhase, setSimulationPhase] = useState('idle');
+            
+            const activeCase = CASES.find(c => c.id === activeCaseId) || CASES[0];
+            const selectedClaim = activeCase.claims.find(c => c.id === selectedClaimId);
+            const fullText = useMemo(() => activeCase.claims.map(c => c.text).join(""), [activeCase]);
+
+            const handleCaseSelect = (caseId) => {
+                setActiveCaseId(caseId);
+                setView('audit');
+                setSimulationPhase('typing');
+                setSelectedClaimId(null);
+            };
+
+            const switchCase = (id) => {
+                if (id === activeCaseId) return;
+                setActiveCaseId(id);
+                setSimulationPhase('typing');
+                setSelectedClaimId(null);
+            };
+
+            const handleTypingComplete = () => {
+                setSimulationPhase('scanning');
+                setTimeout(() => setSimulationPhase('done'), 1500);
+            };
+
+            const scrollToSource = (sourceId) => {
+                if (!sourceId) return;
+                const el = document.getElementById(`source-${sourceId}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            };
+
+            // Effect to auto-scroll when a claim is selected
+            useEffect(() => {
+                if (selectedClaim && selectedClaim.sourceId) {
+                    scrollToSource(selectedClaim.sourceId);
+                }
+            }, [selectedClaim]);
+
+            // Styling helpers
+            const getStatusColor = (status) => {
+                switch(status) {
+                    case 'supported': return 'text-emerald-700 bg-emerald-50 border-emerald-200';
+                    case 'contradicted': return 'text-rose-700 bg-rose-50 border-rose-200';
+                    case 'unverifiable': return 'text-amber-700 bg-amber-50 border-amber-200';
+                    default: return 'text-slate-700';
+                }
+            };
+            
+            const getStatusIcon = (status) => {
+                switch(status) {
+                    case 'supported': return <div className="text-emerald-500"><Icons.CheckCircle /></div>;
+                    case 'contradicted': return <div className="text-rose-500"><Icons.XCircle /></div>;
+                    case 'unverifiable': return <div className="text-amber-500"><Icons.AlertTriangle /></div>;
+                    default: return null;
+                }
+            };
+
+            const getHighlightClass = (claim) => {
+                if (simulationPhase !== 'done') return '';
+                const base = "cursor-pointer transition-all duration-200 rounded px-1 box-decoration-clone relative group ";
+                const isSelected = selectedClaimId === claim.id;
+                
+                let variant = "";
+                if (claim.status === 'supported') variant = isSelected ? "bg-emerald-200 ring-1 ring-emerald-500 text-emerald-900 shadow-sm" : "bg-emerald-100/60 hover:bg-emerald-100 text-emerald-900";
+                if (claim.status === 'contradicted') variant = isSelected ? "bg-rose-200 ring-1 ring-rose-500 text-rose-900 shadow-sm" : "bg-rose-100/60 hover:bg-rose-100 text-rose-900";
+                if (claim.status === 'unverifiable') variant = isSelected ? "bg-amber-200 ring-1 ring-amber-500 text-amber-900 shadow-sm" : "bg-amber-100/60 hover:bg-amber-100 text-amber-900";
+
+                return base + variant;
+            };
+
+            if (view === 'home') return <HomePage onSelectCase={handleCaseSelect} />;
+
+            return (
+                <div className="flex flex-col h-full bg-slate-50 transition-colors duration-500">
+                    
+                    {/* --- HEADER --- */}
+                    <div className="flex-none bg-slate-900 text-white z-40 shadow-xl border-b border-slate-800">
+                        <header className="px-6 py-4 flex items-center justify-between">
+                            <div className="flex items-center gap-4 cursor-pointer group" onClick={() => setView('home')}>
+                                <div className="bg-brand-600 p-2.5 rounded-xl text-white shadow-glow group-hover:scale-110 transition-transform">
+                                    <Icons.Shield />
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-bold tracking-tight leading-none text-white">Enterprise AI Auditor</h1>
+                                    <div className="flex items-center gap-2 mt-1.5 opacity-60">
+                                        <span className="text-[10px] font-mono">SECURE_CHANNEL_ESTABLISHED</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-8">
+                                {/* Case Switcher Dropdown */}
+                                <div className="relative group">
+                                    <button className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg border border-slate-700 text-xs font-bold uppercase transition-all">
+                                        <span className="text-brand-400">{activeCase.category}</span>
+                                        <span className="text-slate-400">/</span>
+                                        <span>{activeCase.title}</span>
+                                        <Icons.ArrowDown />
+                                    </button>
+                                    
+                                    <div className="absolute top-full right-0 mt-2 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden hidden group-hover:block max-h-96 overflow-y-auto z-50">
+                                        {CASES.map(c => (
+                                            <button
+                                                key={c.id}
+                                                onClick={() => switchCase(c.id)}
+                                                className={`w-full text-left px-4 py-3 text-xs border-b border-slate-800 hover:bg-slate-800 transition-colors flex items-center gap-3 ${activeCaseId === c.id ? 'bg-slate-800' : ''}`}
+                                            >
+                                                <div className={`text-slate-400 ${activeCaseId === c.id ? 'text-brand-400' : ''}`}>{c.icon}</div>
+                                                <div>
+                                                    <div className={`font-bold ${activeCaseId === c.id ? 'text-white' : 'text-slate-300'}`}>{c.title}</div>
+                                                    <div className="text-[9px] text-slate-500">{c.category}</div>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <TrustMeter claims={activeCase.claims} />
+                            </div>
+                        </header>
+                    </div>
+
+                    {/* --- MAIN WORKSPACE --- */}
+                    <main className="flex-1 flex overflow-hidden relative">
+                        {/* Scanning Overlay Effect */}
+                        {simulationPhase === 'scanning' && <div className="scanner-line"></div>}
+
+                        {/* LEFT: Annotated Document (LLM Output) */}
+                        <div className="w-1/2 flex flex-col border-r border-slate-200 bg-white shadow-[10px_0_30px_rgba(0,0,0,0.02)] z-10 relative">
+                            <div className="px-8 py-4 border-b border-slate-100 bg-white/80 backdrop-blur-sm sticky top-0 z-20 flex justify-between items-center">
+                                <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                    <div className="p-1 bg-brand-50 rounded text-brand-600"><Icons.Bot /></div>
+                                    Generated Output (For Review)
+                                </h2>
+                                {/* Legend */}
+                                <div className="flex gap-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400"></span> Supported</span>
+                                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-400"></span> Hallucination</span>
+                                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400"></span> Unverified</span>
+                                </div>
+                            </div>
+                            
+                            <div className="p-10 overflow-y-auto leading-loose text-lg text-slate-800 font-sans">
+                                {simulationPhase === 'typing' ? (
+                                    <TypewriterEffect text={fullText} onComplete={handleTypingComplete} />
+                                ) : (
+                                    <div className={`transition-opacity duration-1000 ${simulationPhase === 'scanning' ? 'opacity-50 blur-[1px]' : 'opacity-100'}`}>
+                                        {activeCase.claims.map((claim) => (
+                                            <span 
+                                                key={claim.id}
+                                                onClick={() => setSelectedClaimId(claim.id === selectedClaimId ? null : claim.id)}
+                                                className={getHighlightClass(claim)}
+                                            >
+                                                {claim.text}
+                                                {/* Tooltip on Hover */}
+                                                {simulationPhase === 'done' && (
+                                                    <span className="absolute -top-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] font-bold px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-lg">
+                                                        Confidence: {claim.confidence}
+                                                    </span>
+                                                )}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* RIGHT: Trusted Source */}
+                        <div className="w-1/2 flex flex-col bg-slate-50/50">
+                            <div className="px-8 py-4 border-b border-slate-200 bg-white/60 backdrop-blur-sm sticky top-0 z-20 flex justify-between items-center">
+                                <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                    <div className="p-1 bg-emerald-50 rounded text-emerald-600"><Icons.FileText /></div>
+                                    Source Document (Truth)
+                                </h2>
+                                <span className="text-[10px] font-mono text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100 flex items-center gap-1">
+                                    <Icons.CheckCircle /> VERIFIED_IMMUTABLE
+                                </span>
+                            </div>
+                            
+                            <div className="p-10 overflow-y-auto">
+                                <div className="bg-white rounded-xl shadow-glass border border-white/50 p-12 max-w-3xl mx-auto min-h-[600px] relative">
+                                    {/* Paper texture overlay */}
+                                    <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-slate-100 to-transparent opacity-50 pointer-events-none"></div>
+                                    
+                                    <h3 className="font-serif font-bold text-2xl text-slate-900 mb-8 pb-4 border-b-2 border-slate-100">
+                                        {activeCase.source.title}
+                                    </h3>
+                                    
+                                    <div className="font-serif text-slate-600 text-lg leading-relaxed space-y-4">
+                                        {activeCase.source.paragraphs.map(para => {
+                                            const isActive = selectedClaim && selectedClaim.sourceId === para.id;
+                                            return (
+                                                <div 
+                                                    key={para.id} 
+                                                    id={`source-${para.id}`}
+                                                    className={`p-4 rounded-lg border-l-4 transition-all duration-500 ${
+                                                        isActive 
+                                                        ? 'bg-brand-50 border-brand-500 shadow-sm scale-[1.02] text-slate-900' 
+                                                        : 'border-transparent hover:bg-slate-50 hover:border-slate-200'
+                                                    }`}
+                                                >
+                                                    <span className="text-[10px] font-sans font-bold text-slate-300 block mb-1 select-none">PARAGRAPH {para.id}</span>
+                                                    {para.text}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+
+                    {/* --- BOTTOM: ANALYSIS PANEL (REDESIGNED COMPACT) --- */}
+                    <div className="flex-none bg-slate-50/95 backdrop-blur-xl border-t border-slate-200 z-50 h-[300px] relative transition-all duration-300 flex flex-col">
+                        {/* Tab Header */}
+                        <div className="flex border-b border-slate-200 bg-white/50 px-6 pt-2">
+                             <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-brand-600 border-b-2 border-brand-500 flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse"></span>
+                                Forensic Console
+                             </div>
+                        </div>
+
+                        {selectedClaim ? (
+                            <div className="p-4 h-full flex gap-4 slide-up overflow-hidden bg-slate-50/50">
+                                
+                                {/* CARD 1: VERDICT & SCORE */}
+                                <div className="w-56 flex flex-col gap-2">
+                                    <div className={`flex-1 rounded-xl border p-4 flex flex-col items-center justify-center text-center gap-2 shadow-sm ${getStatusColor(selectedClaim.status)} bg-white relative overflow-hidden`}>
+                                        <div className="absolute inset-0 opacity-10 bg-current pointer-events-none"></div>
+                                        <div className="scale-125 p-1.5 rounded-full bg-white/50">{getStatusIcon(selectedClaim.status)}</div>
+                                        <div>
+                                            <div className="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-0.5">Verdict</div>
+                                            <div className="text-lg font-black uppercase tracking-tight">{selectedClaim.status}</div>
+                                        </div>
+                                        {/* Confidence Bar */}
+                                        <div className="w-full mt-1 px-2">
+                                            <div className="flex justify-between text-[8px] font-mono mb-0.5 font-bold opacity-70">
+                                                <span>CONFIDENCE</span>
+                                                <span>{selectedClaim.confidence}</span>
+                                            </div>
+                                            <div className="h-1 w-full bg-black/5 rounded-full overflow-hidden">
+                                                <div className="h-full bg-current rounded-full" style={{width: selectedClaim.confidence}}></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Meta Data Pill */}
+                                    <div className="h-8 rounded-lg border border-slate-200 bg-white flex items-center justify-between px-3 text-[9px] font-mono text-slate-400">
+                                        <span>ID: {selectedClaim.id}</span>
+                                        <span>HASH: {Date.now().toString().slice(-4)}</span>
+                                    </div>
+                                </div>
+
+                                {/* CARD 2: COMPARISON ENGINE (DIFF VIEW) */}
+                                <div className="flex-1 flex flex-col gap-1">
+                                     <div className="flex items-center justify-between px-1">
+                                        <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                            <Icons.Activity /> Semantic Variance Analysis
+                                        </h4>
+                                        <span className="text-[9px] font-mono text-slate-300 bg-slate-100 px-2 py-0.5 rounded">DIFF_MODE: ACTIVE</span>
+                                     </div>
+                                     
+                                     <div className="flex-1 bg-white rounded-xl border border-slate-200 p-1 shadow-sm flex flex-col relative group">
+                                        {/* Corner accents */}
+                                        <div className="absolute top-0 left-0 w-2 h-2 border-t-2 border-l-2 border-slate-300 rounded-tl-lg"></div>
+                                        <div className="absolute top-0 right-0 w-2 h-2 border-t-2 border-r-2 border-slate-300 rounded-tr-lg"></div>
+                                        <div className="absolute bottom-0 left-0 w-2 h-2 border-b-2 border-l-2 border-slate-300 rounded-bl-lg"></div>
+                                        <div className="absolute bottom-0 right-0 w-2 h-2 border-b-2 border-r-2 border-slate-300 rounded-br-lg"></div>
+
+                                        {/* Claim Top */}
+                                        <div className="flex-1 p-3 border-b border-dashed border-slate-200 relative flex items-center">
+                                            <div className="absolute top-2 right-2 text-[8px] font-bold uppercase text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">LLM Claim</div>
+                                            <p className={`font-medium text-base leading-snug ${selectedClaim.status === 'contradicted' ? 'text-rose-600 line-through decoration-rose-300/50 decoration-2' : 'text-slate-700'}`}>
+                                                "{selectedClaim.text.trim()}"
+                                            </p>
+                                        </div>
+
+                                        {/* Arrow Divider */}
+                                        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border border-slate-200 rounded-full p-1 z-10 shadow-sm text-slate-400">
+                                            <Icons.ArrowDown />
+                                        </div>
+
+                                        {/* Source Bottom */}
+                                        <div className={`flex-1 p-3 rounded-b-lg transition-colors flex flex-col justify-center ${selectedClaim.status === 'contradicted' ? 'bg-rose-50/40' : 'bg-emerald-50/40'}`}>
+                                            <div className="flex justify-between items-center mb-1">
+                                                 <div className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border ${selectedClaim.status === 'contradicted' ? 'bg-rose-100 text-rose-600 border-rose-200' : 'bg-emerald-100 text-emerald-600 border-emerald-200'}`}>
+                                                    {selectedClaim.status === 'contradicted' ? 'Correction from Source' : 'Verifying Evidence'}
+                                                 </div>
+                                                 {selectedClaim.sourceId && <div className="text-[9px] font-mono text-slate-400 cursor-pointer hover:text-brand-500 transition-colors">REF: PARA_{selectedClaim.sourceId}</div>}
+                                            </div>
+                                            <p className={`font-bold text-base leading-snug ${selectedClaim.status === 'contradicted' ? 'text-rose-800' : 'text-emerald-800'}`}>
+                                                 {selectedClaim.correction || "Verified: Claim aligns with source data."}
+                                            </p>
+                                        </div>
+                                     </div>
+                                </div>
+
+                                {/* CARD 3: AUDITOR LOGIC */}
+                                <div className="w-64 flex flex-col gap-2">
+                                     <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2 px-1">
+                                        <Icons.FileText /> Auditor Logic
+                                     </h4>
+                                     <div className="flex-1 bg-white rounded-xl border border-slate-200 p-4 shadow-sm text-xs text-slate-600 leading-relaxed overflow-y-auto">
+                                        {selectedClaim.explanation}
+                                     </div>
+                                     <button 
+                                        onClick={() => scrollToSource(selectedClaim.sourceId)}
+                                        className="h-10 rounded-lg bg-slate-900 text-white text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-brand-600 transition-all shadow-lg shadow-slate-900/20 hover:shadow-brand-600/30 group"
+                                     >
+                                        Locate in Source <span className="group-hover:translate-x-1 transition-transform"><Icons.ArrowRight /></span>
+                                     </button>
+                                </div>
+
+                            </div>
+                        ) : (
+                            // Empty State
+                            <div className="h-full flex flex-col items-center justify-center text-slate-400/50">
+                                 <div className="w-16 h-16 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center mb-4 bg-slate-50">
+                                    <div className="scale-125 opacity-50"><Icons.Eye /></div>
+                                 </div>
+                                 <p className="font-mono text-[10px] uppercase tracking-widest font-bold">Awaiting Selection</p>
+                                 <p className="text-[10px] mt-1 opacity-60">Select a highlighted segment to view forensic data</p>
+                            </div>
+                        )}
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
